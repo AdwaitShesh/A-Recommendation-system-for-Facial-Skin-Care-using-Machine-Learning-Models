@@ -121,7 +121,6 @@ class SkinMetrics(Resource):
 api.add_resource(SkinMetrics, "/upload")
 api.add_resource(Recommendation, "/recommend")
 
-
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(debug=False)
+    port = int(os.environ.get("PORT", 5000))  # Use Render's provided PORT, default to 5000 for local testing
+    app.run(host="0.0.0.0", port=port,debug=False)
