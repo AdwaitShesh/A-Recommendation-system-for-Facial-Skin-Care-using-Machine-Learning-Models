@@ -1,6 +1,6 @@
 import os
 from flask import Flask, request, send_from_directory, jsonify
-from flask_restful import Api, Resource, reqparse
+from flask_restful import Api, Resource
 from flask_cors import CORS
 from models.skin_tone.skin_tone_knn import identify_skin_tone
 from models.recommender.rec import recs_essentials, makeup_recommendation
@@ -10,11 +10,18 @@ import tf_keras as k3  # Import tf_keras instead of tensorflow.keras
 import numpy as np
 import base64
 from io import BytesIO
+import logging
 
 # Initialize Flask app
 app = Flask(__name__, static_folder="./build")
 api = Api(app)
+
+# Configure CORS for production
 CORS(app, resources={r"/api/*": {"origins": "*"}})
+
+# Logging setup
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Load models
 class_names1 = ['Dry_skin', 'Normal_skin', 'Oil_skin']
@@ -24,9 +31,9 @@ skin_tone_dataset = 'models/skin_tone/skin_tone_dataset.csv'
 def get_model():
     global model1, model2
     model1 = k3.models.load_model('./models/skin_model')  # Use k3 to load model
-    print('Model 1 loaded')
+    logger.info('Model 1 loaded')
     model2 = k3.models.load_model('./models/acne_model')  # Use k3 to load model
-    print("Model 2 loaded!")
+    logger.info("Model 2 loaded!")
 
 def load_image(img_path):
     img = tf.keras.preprocessing.image.load_img(img_path, target_size=(224, 224))
@@ -58,35 +65,43 @@ get_model()
 # API Endpoints
 class SkinMetrics(Resource):
     def put(self):
-        args = request.json
-        file = args['file']
-        starter = file.find(',')
-        image_data = file[starter + 1:]
-        image_data = bytes(image_data, encoding="ascii")
-        im = Image.open(BytesIO(base64.b64decode(image_data + b'==')))
-        filename = 'image.png'
-        file_path = os.path.join('./static', filename)
-        im.save(file_path)
-        skin_type = prediction_skin(file_path).split('_')[0]
-        acne_type = prediction_acne(file_path)
-        tone = identify_skin_tone(file_path, dataset=skin_tone_dataset)
-        return {'type': skin_type, 'tone': str(tone), 'acne': acne_type}, 200
+        try:
+            args = request.json
+            file = args['file']
+            starter = file.find(',')
+            image_data = file[starter + 1:]
+            image_data = bytes(image_data, encoding="ascii")
+            im = Image.open(BytesIO(base64.b64decode(image_data + b'==')))
+            filename = 'image.png'
+            file_path = os.path.join('./static', filename)
+            im.save(file_path)
+            skin_type = prediction_skin(file_path).split('_')[0]
+            acne_type = prediction_acne(file_path)
+            tone = identify_skin_tone(file_path, dataset=skin_tone_dataset)
+            return {'type': skin_type, 'tone': str(tone), 'acne': acne_type}, 200
+        except Exception as e:
+            logger.error(f"Error in SkinMetrics: {e}")
+            return {"error": str(e)}, 500
 
 class Recommendation(Resource):
     def put(self):
-        args = request.json
-        features = args['features']
-        tone = args['tone']
-        skin_type = args['type'].lower()
-        skin_tone = 'light to medium'
-        if tone <= 2:
-            skin_tone = 'fair to light'
-        elif tone >= 4:
-            skin_tone = 'medium to dark'
-        fv = [int(value) for value in features.values()]
-        general = recs_essentials(fv, None)
-        makeup = makeup_recommendation(skin_tone, skin_type)
-        return {'general': general, 'makeup': makeup}
+        try:
+            args = request.json
+            features = args['features']
+            tone = args['tone']
+            skin_type = args['type'].lower()
+            skin_tone = 'light to medium'
+            if tone <= 2:
+                skin_tone = 'fair to light'
+            elif tone >= 4:
+                skin_tone = 'medium to dark'
+            fv = [int(value) for value in features.values()]
+            general = recs_essentials(fv, None)
+            makeup = makeup_recommendation(skin_tone, skin_type)
+            return {'general': general, 'makeup': makeup}
+        except Exception as e:
+            logger.error(f"Error in Recommendation: {e}")
+            return {"error": str(e)}, 500
 
 # Serve React app
 @app.route("/", defaults={"path": ""})
@@ -102,5 +117,6 @@ api.add_resource(SkinMetrics, "/api/upload")
 api.add_resource(Recommendation, "/api/recommend")
 
 if __name__ == "__main__":
+    # Use gunicorn for production: `gunicorn app:app`
     port = int(os.environ.get("PORT", 5000))
-    app.run(port=port, debug=True)
+    app.run(host="0.0.0.0", port=port, debug=False)
